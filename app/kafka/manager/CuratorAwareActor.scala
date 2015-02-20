@@ -13,7 +13,7 @@ import scala.util.Try
 /**
  * @author hiral
  */
-case class CuratorConfig(zkConnect: String, zkMaxRetry: Int, baseSleepTimeMs : Int, maxSleepTimeMs: Int)
+case class CuratorConfig(zkConnect: String, zkMaxRetry: Int = 100, baseSleepTimeMs : Int = 100, maxSleepTimeMs: Int = 1000)
 abstract class CuratorAwareActor(curatorConfig: CuratorConfig) extends BaseActor {
 
   protected[this] val curator : CuratorFramework = getCurator(curatorConfig)
@@ -21,8 +21,6 @@ abstract class CuratorAwareActor(curatorConfig: CuratorConfig) extends BaseActor
   curator.start()
 
   protected def getCurator(config: CuratorConfig) : CuratorFramework = {
-    log.info("got base sleep time {}, max sleep time {}, zkMaxRetry {}",
-             config.baseSleepTimeMs, config.maxSleepTimeMs, config.zkMaxRetry)
     val curator: CuratorFramework = CuratorFrameworkFactory.newClient(
       config.zkConnect,
       new BoundedExponentialBackoffRetry(config.baseSleepTimeMs, config.maxSleepTimeMs, config.zkMaxRetry))

@@ -53,9 +53,6 @@ object KafkaManager {
   val MutexTimeoutMillis = "kafka-manager.mutex-timeout-millis"
   val StartDelayMillis = "kafka-manager.start-delay-millis"
   val ApiTimeoutMillis = "kafka-manager.api-timeout-millis"
-  val ZkMaxRetry = "kafka-manager.zk-max-retry"
-  val ZkBaseSleepTimeMs = "kafka-manager.zk-base-sleep-time-ms"
-  val ZkMaxSleepTimeMs = "kafka-manager.zk-max-sleep-time-ms"
 
   val DefaultConfig: Config = {
     val defaults: Map[String, _ <: AnyRef] = Map(
@@ -69,10 +66,7 @@ object KafkaManager {
       ThreadPoolSize -> "2",
       MutexTimeoutMillis -> "4000",
       StartDelayMillis -> "1000",
-      ApiTimeoutMillis -> "1000",
-      ZkMaxRetry -> "0",
-      ZkBaseSleepTimeMs -> "100",
-      ZkMaxSleepTimeMs -> "100"
+      ApiTimeoutMillis -> "1000"
     )
     import scala.collection.JavaConverters._
     ConfigFactory.parseMap(defaults.asJava)
@@ -87,10 +81,7 @@ class KafkaManager(akkaConfig: Config) {
 
   private[this] val configWithDefaults = akkaConfig.withFallback(DefaultConfig)
   val kafkaManagerConfig = {
-    val curatorConfig = CuratorConfig(configWithDefaults.getString(ZkHosts),
-                                      configWithDefaults.getInt(ZkMaxRetry),
-                                      configWithDefaults.getInt(ZkBaseSleepTimeMs),
-                                      configWithDefaults.getInt(ZkMaxSleepTimeMs))
+    val curatorConfig = CuratorConfig(configWithDefaults.getString(ZkHosts))
     KafkaManagerActorConfig(
       curatorConfig = curatorConfig,
       baseZkPath = configWithDefaults.getString(BaseZkPath) ,
@@ -155,15 +146,15 @@ class KafkaManager(akkaConfig: Config) {
     }
   }
 
-  def addCluster(clusterName: String, version: String, zkHosts: String, zkMaxRetry : Int, zkBaseSleepTimeMs : Int, ZkMaxSleepTimeMs : Int) : Future[ApiError \/ Unit] = {
-    val cc = ClusterConfig(clusterName, version, zkHosts, zkMaxRetry, zkBaseSleepTimeMs, ZkMaxSleepTimeMs)
+  def addCluster(clusterName: String, version: String, zkHosts: String) : Future[ApiError \/ Unit] = {
+    val cc = ClusterConfig(clusterName, version, zkHosts)
     tryWithKafkaManagerActor(KMAddCluster(cc)) { result: KMCommandResult =>
       result.result.get
     }
   }
 
-  def updateCluster(clusterName: String, version: String, zkHosts: String, zkMaxRetry : Int, zkBaseSleepTimeMs : Int, ZkMaxSleepTimeMs : Int) : Future[ApiError \/ Unit] = {
-    val cc = ClusterConfig(clusterName, version, zkHosts, zkMaxRetry, zkBaseSleepTimeMs, ZkMaxSleepTimeMs)
+  def updateCluster(clusterName: String, version: String, zkHosts: String) : Future[ApiError \/ Unit] = {
+    val cc = ClusterConfig(clusterName, version, zkHosts)
     tryWithKafkaManagerActor(KMUpdateCluster(cc)) { result: KMCommandResult =>
       result.result.get
     }

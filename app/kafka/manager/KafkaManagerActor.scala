@@ -73,18 +73,18 @@ object ClusterConfig {
     require(zkHosts.length > 0, "cluster zk hosts is illegal, can't be empty!")
   }
 
-  def apply(name: String, version : String, zkHosts: String, zkMaxRetry : Int, zkBaseSleepTimeMs : Int, zkMaxSleepTimeMs : Int) : ClusterConfig = {
+  def apply(name: String, version : String, zkHosts: String, zkMaxRetry : Int = 100) : ClusterConfig = {
     val kafkaVersion = KafkaVersion(version)
     //validate cluster name
     validateName(name)
     //validate zk hosts
     validateZkHosts(zkHosts)
     val cleanZkHosts = zkHosts.replaceAll(" ","").toLowerCase
-    new ClusterConfig(name.toLowerCase, CuratorConfig(cleanZkHosts, zkMaxRetry, zkBaseSleepTimeMs, zkMaxSleepTimeMs), true, kafkaVersion)
+    new ClusterConfig(name.toLowerCase, CuratorConfig(cleanZkHosts, zkMaxRetry), true, kafkaVersion)
   }
 
-  def customUnapply(cc: ClusterConfig) : Option[(String, String, String, Int, Int, Int)] = {
-    Some((cc.name, cc.version.toString, cc.curatorConfig.zkConnect, cc.curatorConfig.zkMaxRetry, cc.curatorConfig.baseSleepTimeMs, cc.curatorConfig.maxSleepTimeMs))
+  def customUnapply(cc: ClusterConfig) : Option[(String, String, String, Int)] = {
+    Some((cc.name, cc.version.toString, cc.curatorConfig.zkConnect, cc.curatorConfig.zkMaxRetry))
   }
 
   import scalaz.{Failure,Success}
