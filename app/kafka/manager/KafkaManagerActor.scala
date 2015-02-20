@@ -73,18 +73,18 @@ object ClusterConfig {
     require(zkHosts.length > 0, "cluster zk hosts is illegal, can't be empty!")
   }
 
-  def apply(name: String, version : String, zkHosts: String, zkMaxRetry: Int = 100) : ClusterConfig = {
+  def apply(name: String, version : String, zkHosts: String, zkMaxRetry : Int, zkBaseSleepTimeMs : Int, zkMaxSleepTimeMs : Int) : ClusterConfig = {
     val kafkaVersion = KafkaVersion(version)
     //validate cluster name
     validateName(name)
     //validate zk hosts
     validateZkHosts(zkHosts)
     val cleanZkHosts = zkHosts.replaceAll(" ","").toLowerCase
-    new ClusterConfig(name.toLowerCase, CuratorConfig(cleanZkHosts, zkMaxRetry), true, kafkaVersion)
+    new ClusterConfig(name.toLowerCase, CuratorConfig(cleanZkHosts, zkMaxRetry, zkBaseSleepTimeMs, zkMaxSleepTimeMs), true, kafkaVersion)
   }
 
-  def customUnapply(cc: ClusterConfig) : Option[(String, String, String, Int)] = {
-    Some((cc.name, cc.version.toString, cc.curatorConfig.zkConnect, cc.curatorConfig.zkMaxRetry))
+  def customUnapply(cc: ClusterConfig) : Option[(String, String, String, Int, Int, Int)] = {
+    Some((cc.name, cc.version.toString, cc.curatorConfig.zkConnect, cc.curatorConfig.zkMaxRetry, cc.curatorConfig.baseSleepTimeMs, cc.curatorConfig.maxSleepTimeMs))
   }
 
   import scalaz.{Failure,Success}
@@ -179,21 +179,23 @@ class KafkaManagerActor(kafkaManagerConfig: KafkaManagerActorConfig)
   log.info(s"zk=${kafkaManagerConfig.curatorConfig.zkConnect}")
   log.info(s"baseZkPath=$baseZkPath")
 
-  //create kafka manager base path
-  Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(baseZkPath))
-  require(curator.checkExists().forPath(baseZkPath) != null,s"Kafka manager base path not found : $baseZkPath")
+  private def setupCurator() = {
+    //create kafka manager base path
+    Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(baseZkPath))
+    require(curator.checkExists().forPath(baseZkPath) != null,s"Kafka manager base path not found : $baseZkPath")
 
-  //create kafka manager base clusters path
-  Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(baseClusterZkPath))
-  require(curator.checkExists().forPath(baseClusterZkPath) != null,s"Kafka manager base clusters path not found : $baseClusterZkPath")
+    //create kafka manager base clusters path
+    Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(baseClusterZkPath))
+    require(curator.checkExists().forPath(baseClusterZkPath) != null,s"Kafka manager base clusters path not found : $baseClusterZkPath")
 
-  //create kafka manager delete clusters path
-  Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(deleteClustersZkPath))
-  require(curator.checkExists().forPath(deleteClustersZkPath) != null,s"Kafka manager delete clusters path not found : $deleteClustersZkPath")
+    //create kafka manager delete clusters path
+    Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(deleteClustersZkPath))
+    require(curator.checkExists().forPath(deleteClustersZkPath) != null,s"Kafka manager delete clusters path not found : $deleteClustersZkPath")
 
-  //create kafka manager configs path
-  Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(configsZkPath))
-  require(curator.checkExists().forPath(configsZkPath) != null,s"Kafka manager configs path not found : $configsZkPath")
+    //create kafka manager configs path
+    Try(curator.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath(configsZkPath))
+    require(curator.checkExists().forPath(configsZkPath) != null,s"Kafka manager configs path not found : $configsZkPath")
+  }
 
   private[this] val longRunningExecutor = new ThreadPoolExecutor(
     kafkaManagerConfig.threadPoolSize,
@@ -246,6 +248,8 @@ class KafkaManagerActor(kafkaManagerConfig: KafkaManagerActorConfig)
   private[this] var clusterConfigMap : Map[String,ClusterConfig] = Map.empty
   private[this] var pendingClusterConfigMap : Map[String,ClusterConfig] = Map.empty
 
+  private[this] var lastError : Throwable = null;
+
   private[this] def modify(fn: => Any) : Unit = {
     if(longRunningExecutor.getQueue.remainingCapacity() == 0) {
       Future.successful(KMCommandResult(Try(throw new UnsupportedOperationException("Long running executor blocking queue is full!"))))
@@ -270,25 +274,30 @@ class KafkaManagerActor(kafkaManagerConfig: KafkaManagerActorConfig)
 
   @scala.throws[Exception](classOf[Exception])
   override def preStart() = {
-    super.preStart()
+    try {
+      setupCurator()
+      super.preStart()
 
-    import scala.concurrent.duration._
-    log.info("Started actor %s".format(self.path))
+      import scala.concurrent.duration._
+      log.info("Started actor %s".format(self.path))
 
-    log.info("Starting delete clusters path cache...")
-    deleteClustersPathCache.start(StartMode.BUILD_INITIAL_CACHE)
+      log.info("Starting delete clusters path cache...")
+      deleteClustersPathCache.start(StartMode.BUILD_INITIAL_CACHE)
 
-    log.info("Starting kafka manager path cache...")
-    kafkaManagerPathCache.start(StartMode.BUILD_INITIAL_CACHE)
+      log.info("Starting kafka manager path cache...")
+      kafkaManagerPathCache.start(StartMode.BUILD_INITIAL_CACHE)
 
-    log.info("Adding kafka manager path cache listener...")
-    kafkaManagerPathCache.getListenable.addListener(pathCacheListener)
+      log.info("Adding kafka manager path cache listener...")
+      kafkaManagerPathCache.getListenable.addListener(pathCacheListener)
 
-    implicit val ec = longRunningExecutionContext
-    //schedule periodic forced update
-    context.system.scheduler.schedule(
-      Duration(kafkaManagerConfig.startDelayMillis,TimeUnit.MILLISECONDS),kafkaManagerConfig.kafkaManagerUpdatePeriod) {
-      self ! KMUpdateState
+      implicit val ec = longRunningExecutionContext
+      //schedule periodic forced update
+      context.system.scheduler.schedule(
+        Duration(kafkaManagerConfig.startDelayMillis,TimeUnit.MILLISECONDS),kafkaManagerConfig.kafkaManagerUpdatePeriod) {
+        self ! KMUpdateState
+      }
+    } catch {
+      case t : Throwable => { lastError = t }
     }
   }
 
@@ -326,6 +335,12 @@ class KafkaManagerActor(kafkaManagerConfig: KafkaManagerActorConfig)
   }
 
   override def processActorRequest(request: ActorRequest): Unit = {
+    if (lastError != null) {
+      sender ! ActorErrorResponse(lastError.getMessage())
+      lastError = null
+      return
+    }
+
     request match {
       case KMGetActiveClusters =>
         sender ! KMQueryResult(clusterConfigMap.values.filter(_.enabled).toIndexedSeq)

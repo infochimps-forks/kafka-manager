@@ -66,7 +66,9 @@ object Cluster extends Controller {
       "name" -> nonEmptyText.verifying(maxLength(250), validateName),
       "kafkaVersion" -> nonEmptyText.verifying(validateKafkaVersion),
       "zkHosts" -> nonEmptyText.verifying(validateZkHosts),
-      "zkMaxRetry" -> ignored(100 : Int)
+      "zkMaxRetry" -> ignored(0 : Int),
+      "zkBaseSleepTimeMs" -> ignored(100 : Int),
+      "zkMaxSleepTimeMs" -> ignored(100 : Int)
     )(ClusterConfig.apply)(ClusterConfig.customUnapply)
   )
 
@@ -76,7 +78,9 @@ object Cluster extends Controller {
       "name" -> nonEmptyText.verifying(maxLength(250), validateName),
       "kafkaVersion" -> nonEmptyText.verifying(validateKafkaVersion),
       "zkHosts" -> nonEmptyText.verifying(validateZkHosts),
-      "zkMaxRetry" -> ignored(100 : Int)
+      "zkMaxRetry" -> ignored(100 : Int),
+      "zkBaseSleepTimeMs" -> ignored(100 : Int),
+      "zkMaxSleepTimeMs" -> ignored(100 : Int)
     )(ClusterOperation.apply)(ClusterOperation.customUnapply)
   )
 
@@ -87,7 +91,7 @@ object Cluster extends Controller {
   def updateCluster(c: String) = Action.async { implicit request =>
     kafkaManager.getClusterConfig(c).map { errorOrClusterConfig =>
       Ok(views.html.cluster.updateCluster(c,errorOrClusterConfig.map { cc =>
-        updateForm.fill(ClusterOperation.apply(Update.toString,cc.name,cc.version.toString,cc.curatorConfig.zkConnect,cc.curatorConfig.zkMaxRetry))
+        updateForm.fill(ClusterOperation.apply(Update.toString,cc.name,cc.version.toString,cc.curatorConfig.zkConnect,cc.curatorConfig.zkMaxRetry,cc.curatorConfig.baseSleepTimeMs,cc.curatorConfig.maxSleepTimeMs))
       }))
     }
   }
@@ -96,7 +100,7 @@ object Cluster extends Controller {
     clusterConfigForm.bindFromRequest.fold(
       formWithErrors => Future.successful(BadRequest(views.html.cluster.addCluster(formWithErrors))),
       clusterConfig => {
-        kafkaManager.addCluster(clusterConfig.name, clusterConfig.version.toString, clusterConfig.curatorConfig.zkConnect).map { errorOrSuccess =>
+        kafkaManager.addCluster(clusterConfig.name, clusterConfig.version.toString, clusterConfig.curatorConfig.zkConnect, clusterConfig.curatorConfig.zkMaxRetry, clusterConfig.curatorConfig.baseSleepTimeMs, clusterConfig.curatorConfig.maxSleepTimeMs).map { errorOrSuccess =>
           Ok(views.html.common.resultOfCommand(
             views.html.navigation.defaultMenu(),
             models.navigation.BreadCrumbs.withView("Add Cluster"),
@@ -151,7 +155,10 @@ object Cluster extends Controller {
           kafkaManager.updateCluster(
             clusterOperation.clusterConfig.name,
             clusterOperation.clusterConfig.version.toString,
-            clusterOperation.clusterConfig.curatorConfig.zkConnect
+            clusterOperation.clusterConfig.curatorConfig.zkConnect,
+            clusterOperation.clusterConfig.curatorConfig.zkMaxRetry,
+            clusterOperation.clusterConfig.curatorConfig.baseSleepTimeMs,
+            clusterOperation.clusterConfig.curatorConfig.maxSleepTimeMs
           ).map { errorOrSuccess =>
             Ok(views.html.common.resultOfCommand(
               views.html.navigation.defaultMenu(),
